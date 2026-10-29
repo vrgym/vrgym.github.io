@@ -21,17 +21,28 @@ const PINCH_ON = 0.018;   // metres: fingertips closer than this => pinch
 const PINCH_OFF = 0.035;  // hysteresis so a pinch doesn't flicker
 const MAX_OBJECTS = 160;  // oldest objects are recycled past this count
 const MAX_THROW_SPEED = 6; // m/s cap so a fast flick can't launch things absurdly
-const GRAB_RADIUS = 0.09; // metres: pinch this close to an object to grab it
+const GRAB_MARGIN = 0.04;  // metres added to an object's radius to grab it (surface contact)
+const GRAB_MODE_DIST = 0.06; // thumb-index closer than this => "grabbing", soften fingertips
 
 // Joints turned into kinematic sphere colliders so hands can hit objects.
-// [jointName, radiusInMetres]
+// [jointName, radiusInMetres, softWhenGrabbing]
+// Fingertips are softened while grabbing so they don't bat the target away.
+// Knuckles, metacarpals (palm + back + sides) and wrist stay active so you can
+// hit with the back or edge of the hand, or a fist.
 const HAND_COLLIDER_JOINTS = [
-  ['thumb-tip', 0.012],
-  ['index-finger-tip', 0.012],
-  ['middle-finger-tip', 0.012],
-  ['ring-finger-tip', 0.012],
-  ['pinky-finger-tip', 0.012],
-  ['middle-finger-metacarpal', 0.045], // palm
+  ['thumb-tip', 0.013, true],
+  ['index-finger-tip', 0.013, true],
+  ['middle-finger-tip', 0.013, true],
+  ['ring-finger-tip', 0.013, true],
+  ['pinky-finger-tip', 0.013, true],
+  ['index-finger-phalanx-proximal', 0.016, false],
+  ['middle-finger-phalanx-proximal', 0.016, false],
+  ['ring-finger-phalanx-proximal', 0.016, false],
+  ['pinky-finger-phalanx-proximal', 0.016, false],
+  ['index-finger-metacarpal', 0.022, false],
+  ['middle-finger-metacarpal', 0.030, false], // palm
+  ['pinky-finger-metacarpal', 0.022, false],
+  ['wrist', 0.030, false],
 ];
 
 // ---------------------------------------------------------------------------
@@ -107,13 +118,16 @@ world.addContactMaterial(new CANNON.ContactMaterial(handMat, boxMat, {
   friction: 0.4,
 }));
 
-// Safety-net ground at y = 0 (local-floor origin sits on the real floor).
-// This guarantees objects never fall forever, even before plane detection
-// has produced a floor collider.
-const groundBody = new CANNON.Body({ type: CANNON.Body.STATIC, material: surfaceMat });
-groundBody.addShape(new CANNON.Plane());
-groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0); // face +Y
-world.addBody(groundBody);
+// Safety net far BELOW the scene. We intentionally do NOT put a floor at y = 0:
+// objects must rest on the *real* detected floor plane (posed at its true
+// height), otherwise an assumed y = 0 floor can hover at head height if the
+// runtime's origin isn't exactly on the ground. This plane only stops objects
+// from falling forever before the floor is detected.
+const catchBody = new CANNON.Body({ type: CANNON.Body.STATIC, material: surfaceMat });
+catchBody.addShape(new CANNON.Plane());
+catchBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0); // face +Y
+catchBody.position.set(0, -6, 0);
+world.addBody(catchBody);
 
 // ---------------------------------------------------------------------------
 // Spawnable objects (mesh <-> body pairs)
@@ -149,7 +163,7 @@ function spawnSphere(position, velocity) {
   body.linearDamping = 0.01;
   world.addBody(body);
 
-  register(body, mesh);
+  register(body, mesh, r); // grab radius = sphere radius
 }
 
 function spawnCube(position, velocity) {
@@ -172,11 +186,11 @@ function spawnCube(position, velocity) {
   body.angularDamping = 0.1;
   world.addBody(body);
 
-  register(body, mesh);
+  register(body, mesh, s * 0.7); // grab radius ~ cube half-extent + margin
 }
 
-function register(body, mesh) {
-  objects.push({ body, mesh, held: false });
+function register(body, mesh, grabRadius) {
+  objects.push({ body, mesh, held: false, grabRadius });
   if (objects.length > MAX_OBJECTS) {
     const old = objects.shift();
     world.removeBody(old.body);
@@ -195,10 +209,10 @@ function clearObjects() {
   for (const h of hands) h.held = null; // drop anything being held
 }
 
-/** Nearest grabbable object to a world point, or null. */
+/** Nearest object whose surface the fingers are touching, or null. */
 function findGrabbable(point) {
   let best = null;
-  let bestDist = GRAB_RADIUS;
+  let bestDist = Infinity;
   for (const o of objects) {
     if (o.held) continue;
     const b = o.body;
@@ -206,7 +220,8 @@ function findGrabbable(point) {
     const dy = point.y - b.position.y;
     const dz = point.z - b.position.z;
     const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    if (d < bestDist) {
+    // Grab when the pinch point reaches the object's surface (+ a little margin).
+    if (d < o.grabRadius + GRAB_MARGIN && d < bestDist) {
       bestDist = d;
       best = o;
     }
@@ -361,12 +376,12 @@ function makeHandState(index) {
 
   // Kinematic colliders that follow the tracked joints so the hand can
   // physically strike objects and knock them away.
-  const colliders = HAND_COLLIDER_JOINTS.map(([name, r]) => {
+  const colliders = HAND_COLLIDER_JOINTS.map(([name, r, soft]) => {
     const body = new CANNON.Body({ type: CANNON.Body.KINEMATIC, material: handMat });
     body.addShape(new CANNON.Sphere(r));
     body.collisionResponse = false; // off until the joint is actually tracked
     world.addBody(body);
-    return { name, body, prev: new THREE.Vector3(), hasPrev: false };
+    return { name, body, soft, hasPrev: false };
   });
 
   const state = {
@@ -422,27 +437,46 @@ function jointWorld(hand, name, out) {
 // momentum to the objects it touches.
 function updateHandColliders(dt) {
   for (const state of hands) {
+    // "Grabbing" when already holding something, or when thumb and index are
+    // closing in. While grabbing, the fingertips stop pushing so you can
+    // enclose an object instead of knocking it away.
+    const hasThumb = jointWorld(state.hand, 'thumb-tip', _a);
+    const hasIndex = jointWorld(state.hand, 'index-finger-tip', _b);
+    const grabbing = !!state.held || (hasThumb && hasIndex && _a.distanceTo(_b) < GRAB_MODE_DIST);
+
     for (const c of state.colliders) {
       const b = c.body;
-      if (dt > 0 && jointWorld(state.hand, c.name, _c)) {
-        if (!c.hasPrev) {
-          // First frame tracked: teleport into place without a velocity spike.
-          b.position.set(_c.x, _c.y, _c.z);
-          b.velocity.set(0, 0, 0);
-          c.hasPrev = true;
-        } else {
-          // Steer toward the joint via velocity so the engine integrates the
-          // motion and transfers momentum to anything the collider hits.
-          _vel.set((_c.x - b.position.x) / dt, (_c.y - b.position.y) / dt, (_c.z - b.position.z) / dt);
-          if (_vel.length() > MAX_THROW_SPEED * 1.5) _vel.setLength(MAX_THROW_SPEED * 1.5);
-          b.velocity.set(_vel.x, _vel.y, _vel.z);
-        }
-        b.collisionResponse = true;
-      } else {
+      const tracked = dt > 0 && jointWorld(state.hand, c.name, _c);
+
+      if (!tracked) {
         b.collisionResponse = false;
         b.velocity.set(0, 0, 0);
         c.hasPrev = false;
+        continue;
       }
+
+      if (grabbing && c.soft) {
+        // Fingertip in grab mode: follow the joint but don't shove objects.
+        b.position.set(_c.x, _c.y, _c.z);
+        b.velocity.set(0, 0, 0);
+        b.collisionResponse = false;
+        c.hasPrev = true;
+        continue;
+      }
+
+      if (!c.hasPrev) {
+        // First frame tracked: teleport into place without a velocity spike.
+        b.position.set(_c.x, _c.y, _c.z);
+        b.velocity.set(0, 0, 0);
+        c.hasPrev = true;
+      } else {
+        // Steer toward the joint via velocity so the engine integrates the
+        // motion and transfers momentum to anything the collider hits.
+        _vel.set((_c.x - b.position.x) / dt, (_c.y - b.position.y) / dt, (_c.z - b.position.z) / dt);
+        if (_vel.length() > MAX_THROW_SPEED * 1.5) _vel.setLength(MAX_THROW_SPEED * 1.5);
+        b.velocity.set(_vel.x, _vel.y, _vel.z);
+      }
+      b.collisionResponse = true;
     }
   }
 }
