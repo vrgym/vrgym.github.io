@@ -9,8 +9,11 @@ superficies (suelo, paredes, mesas) y deja lanzar **cubos y esferas con física*
 
 - **Passthrough / realidad mixta**: sesión `immersive-ar`, ves tu habitación real.
 - **Detección del entorno**: `plane-detection` convierte las superficies reales
-  (suelo, paredes, mesas) en colisionadores físicos. `mesh-detection` queda
-  solicitado para ampliarlo a la malla completa de la sala (ver ideas abajo).
+  (suelo, paredes, mesas) de tu *Space Setup* en colisionadores físicos, así que
+  **puedes apoyar y apilar objetos sobre tu mesa real** y rebotarlos contra las
+  paredes. Las superficies se pintan tenuemente (verde = apoyables, azul = paredes)
+  y el HUD indica cuántas detectó. `mesh-detection` queda solicitado para ampliarlo
+  a la malla completa de la sala (ver ideas abajo).
 - **Física real** (cannon-es): gravedad, las esferas rebotan, los cubos se apilan
   y las torres se caen si las golpeas.
 - **Control por manos** (sin mandos): pellizca para crear, **agarra y lanza**

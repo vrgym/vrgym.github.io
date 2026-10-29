@@ -247,13 +247,25 @@ function release(state) {
 // plane's polygon, plus a translucent mesh so you can see what was detected.
 const planeColliders = new Map(); // XRPlane -> { body, mesh, lastChanged }
 
-const planeVizMat = new THREE.MeshBasicMaterial({
-  color: 0x6ee7ff,
-  transparent: true,
-  opacity: 0.08,
-  side: THREE.DoubleSide,
-  depthWrite: false,
-});
+// Visualize surfaces so you can confirm detection: green-ish for things you
+// can rest objects on (floor, tables), blue-ish for walls/ceilings.
+function makePlaneMat(color) {
+  return new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity: 0.1,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+}
+const horizontalMat = makePlaneMat(0x7cf29a); // floor / tables / desks
+const verticalMat = makePlaneMat(0x6ea8ff); // walls / windows / doors
+
+// Labels that mean "a surface you can put things on top of".
+const TABLE_LABELS = new Set(['table', 'desk', 'shelf', 'couch', 'bed', 'other']);
+
+// Counts for the on-screen feedback, refreshed every frame.
+const planeStats = { total: 0, tables: 0 };
 
 function updatePlanes(frame, referenceSpace) {
   const detected = frame.detectedPlanes;
@@ -289,7 +301,10 @@ function updatePlanes(frame, referenceSpace) {
       const depth = Math.max(maxZ - minZ, 0.05);
       const cx = (minX + maxX) / 2;
       const cz = (minZ + maxZ) / 2;
-      const halfY = 0.01; // 2 cm thick slab
+
+      // Thick slab (10 cm) whose TOP face sits exactly on the real surface, so
+      // objects rest flush on the tabletop and fast throws don't tunnel through.
+      const halfY = 0.05;
 
       if (record) {
         world.removeBody(record.body);
@@ -299,10 +314,13 @@ function updatePlanes(frame, referenceSpace) {
       const body = new CANNON.Body({ type: CANNON.Body.STATIC, material: surfaceMat });
       body.addShape(
         new CANNON.Box(new CANNON.Vec3(width / 2, halfY, depth / 2)),
-        new CANNON.Vec3(cx, 0, cz) // offset so the slab is centred on the polygon
+        new CANNON.Vec3(cx, -halfY, cz) // push the slab down so its top is the surface
       );
 
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(width, halfY * 2, depth), planeVizMat);
+      // Flat quad drawn right on the surface (plane local X-Z).
+      const vizGeo = new THREE.PlaneGeometry(width, depth).rotateX(-Math.PI / 2);
+      const mat = plane.orientation === 'vertical' ? verticalMat : horizontalMat;
+      const mesh = new THREE.Mesh(vizGeo, mat);
       mesh.position.set(cx, 0, cz);
       const group = new THREE.Group(); // group holds the offset mesh, posed by XR pose
       group.add(mesh);
@@ -317,6 +335,16 @@ function updatePlanes(frame, referenceSpace) {
     record.body.quaternion.set(q.x, q.y, q.z, q.w);
     record.mesh.position.set(p.x, p.y, p.z);
     record.mesh.quaternion.set(q.x, q.y, q.z, q.w);
+  }
+
+  // Refresh on-screen stats so you can confirm the room was picked up.
+  planeStats.total = 0;
+  planeStats.tables = 0;
+  for (const plane of detected) {
+    planeStats.total++;
+    if (plane.orientation === 'horizontal' && TABLE_LABELS.has(plane.semanticLabel)) {
+      planeStats.tables++;
+    }
   }
 }
 
@@ -492,6 +520,7 @@ function updateHands(dt) {
 // Session lifecycle + render loop
 // ---------------------------------------------------------------------------
 const hud = document.getElementById('hud');
+const hudPlanes = document.getElementById('hud-planes');
 const landing = document.getElementById('landing');
 
 renderer.xr.addEventListener('sessionstart', () => {
@@ -514,6 +543,16 @@ renderer.setAnimationLoop((timestamp, frame) => {
     updatePlanes(frame, referenceSpace);
     updateHandColliders(dt);
     updateHands(dt);
+
+    // Lightweight on-screen confirmation of what the room scan picked up.
+    if (hudPlanes) {
+      if (planeStats.total === 0) {
+        hudPlanes.innerHTML = '<span class="dot" style="color:#ffb86b">●</span> Mueve la cabeza para detectar superficies…';
+      } else {
+        const tableNote = planeStats.tables > 0 ? ` · 🟢 ${planeStats.tables} mesa(s)` : '';
+        hudPlanes.innerHTML = `<span class="dot">●</span> ${planeStats.total} superficies${tableNote}`;
+      }
+    }
   }
 
   // Step the simulation and copy transforms to the render meshes.
