@@ -21,6 +21,18 @@ const PINCH_ON = 0.018;   // metres: fingertips closer than this => pinch
 const PINCH_OFF = 0.035;  // hysteresis so a pinch doesn't flicker
 const MAX_OBJECTS = 160;  // oldest objects are recycled past this count
 const MAX_THROW_SPEED = 6; // m/s cap so a fast flick can't launch things absurdly
+const GRAB_RADIUS = 0.09; // metres: pinch this close to an object to grab it
+
+// Joints turned into kinematic sphere colliders so hands can hit objects.
+// [jointName, radiusInMetres]
+const HAND_COLLIDER_JOINTS = [
+  ['thumb-tip', 0.012],
+  ['index-finger-tip', 0.012],
+  ['middle-finger-tip', 0.012],
+  ['ring-finger-tip', 0.012],
+  ['pinky-finger-tip', 0.012],
+  ['middle-finger-metacarpal', 0.045], // palm
+];
 
 // ---------------------------------------------------------------------------
 // Three.js scene
@@ -63,6 +75,7 @@ world.allowSleep = true; // stacked objects fall asleep -> stable towers
 const surfaceMat = new CANNON.Material('surface'); // detected walls/tables/floor
 const sphereMat = new CANNON.Material('sphere');
 const boxMat = new CANNON.Material('box');
+const handMat = new CANNON.Material('hand'); // kinematic fingertip/palm colliders
 
 world.addContactMaterial(new CANNON.ContactMaterial(surfaceMat, sphereMat, {
   restitution: 0.75, // lively bounce off real surfaces
@@ -82,6 +95,15 @@ world.addContactMaterial(new CANNON.ContactMaterial(sphereMat, sphereMat, {
 }));
 world.addContactMaterial(new CANNON.ContactMaterial(boxMat, sphereMat, {
   restitution: 0.35,
+  friction: 0.4,
+}));
+// Hands hit things: a bit of bounce so a punch sends objects flying.
+world.addContactMaterial(new CANNON.ContactMaterial(handMat, sphereMat, {
+  restitution: 0.5,
+  friction: 0.3,
+}));
+world.addContactMaterial(new CANNON.ContactMaterial(handMat, boxMat, {
+  restitution: 0.3,
   friction: 0.4,
 }));
 
@@ -154,7 +176,7 @@ function spawnCube(position, velocity) {
 }
 
 function register(body, mesh) {
-  objects.push({ body, mesh });
+  objects.push({ body, mesh, held: false });
   if (objects.length > MAX_OBJECTS) {
     const old = objects.shift();
     world.removeBody(old.body);
@@ -170,6 +192,52 @@ function clearObjects() {
     o.mesh.material.dispose();
   }
   objects.length = 0;
+  for (const h of hands) h.held = null; // drop anything being held
+}
+
+/** Nearest grabbable object to a world point, or null. */
+function findGrabbable(point) {
+  let best = null;
+  let bestDist = GRAB_RADIUS;
+  for (const o of objects) {
+    if (o.held) continue;
+    const b = o.body;
+    const dx = point.x - b.position.x;
+    const dy = point.y - b.position.y;
+    const dz = point.z - b.position.z;
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    if (d < bestDist) {
+      bestDist = d;
+      best = o;
+    }
+  }
+  return best;
+}
+
+/** Pick up an object: becomes kinematic and follows the hand. */
+function grab(state, obj) {
+  state.held = obj;
+  obj.held = true;
+  const b = obj.body;
+  b.type = CANNON.Body.KINEMATIC;
+  b.allowSleep = false;
+  b.angularVelocity.set(0, 0, 0);
+  b.wakeUp();
+}
+
+/** Let go: back to dynamic and inherit the hand's velocity (throw). */
+function release(state) {
+  const obj = state.held;
+  state.held = null;
+  if (!obj) return;
+  obj.held = false;
+  const b = obj.body;
+  b.type = CANNON.Body.DYNAMIC;
+  b.updateMassProperties();
+  b.allowSleep = true;
+  const v = state.tipVelocity;
+  b.velocity.set(v.x, v.y, v.z);
+  b.wakeUp();
 }
 
 // ---------------------------------------------------------------------------
@@ -263,9 +331,21 @@ function makeHandState(index) {
   hand.add(handFactory.createHandModel(hand, 'mesh'));
   scene.add(hand);
 
+  // Kinematic colliders that follow the tracked joints so the hand can
+  // physically strike objects and knock them away.
+  const colliders = HAND_COLLIDER_JOINTS.map(([name, r]) => {
+    const body = new CANNON.Body({ type: CANNON.Body.KINEMATIC, material: handMat });
+    body.addShape(new CANNON.Sphere(r));
+    body.collisionResponse = false; // off until the joint is actually tracked
+    world.addBody(body);
+    return { name, body, prev: new THREE.Vector3(), hasPrev: false };
+  });
+
   const state = {
     hand,
     handedness: null, // 'left' | 'right', learned on connect
+    colliders,
+    held: null, // object currently grabbed by this hand
     indexPinching: false,
     middlePinching: false,
     prevTip: new THREE.Vector3(),
@@ -281,6 +361,12 @@ function makeHandState(index) {
     state.hasPrev = false;
     state.indexPinching = false;
     state.middlePinching = false;
+    if (state.held) release(state); // drop whatever was held when tracking is lost
+    for (const c of state.colliders) {
+      c.body.collisionResponse = false;
+      c.body.velocity.set(0, 0, 0);
+      c.hasPrev = false;
+    }
   });
 
   return state;
@@ -291,6 +377,8 @@ const hands = [makeHandState(0), makeHandState(1)];
 const _a = new THREE.Vector3();
 const _b = new THREE.Vector3();
 const _mid = new THREE.Vector3();
+const _c = new THREE.Vector3();
+const _vel = new THREE.Vector3();
 
 function jointWorld(hand, name, out) {
   const joint = hand.joints?.[name];
@@ -299,6 +387,36 @@ function jointWorld(hand, name, out) {
   // When a hand isn't tracked the joints sit exactly at the origin.
   if (out.lengthSq() < 1e-6) return false;
   return true;
+}
+
+// Drive the kinematic hand colliders from the tracked joints. Setting both
+// position AND velocity each frame is what lets a moving hand transfer
+// momentum to the objects it touches.
+function updateHandColliders(dt) {
+  for (const state of hands) {
+    for (const c of state.colliders) {
+      const b = c.body;
+      if (dt > 0 && jointWorld(state.hand, c.name, _c)) {
+        if (!c.hasPrev) {
+          // First frame tracked: teleport into place without a velocity spike.
+          b.position.set(_c.x, _c.y, _c.z);
+          b.velocity.set(0, 0, 0);
+          c.hasPrev = true;
+        } else {
+          // Steer toward the joint via velocity so the engine integrates the
+          // motion and transfers momentum to anything the collider hits.
+          _vel.set((_c.x - b.position.x) / dt, (_c.y - b.position.y) / dt, (_c.z - b.position.z) / dt);
+          if (_vel.length() > MAX_THROW_SPEED * 1.5) _vel.setLength(MAX_THROW_SPEED * 1.5);
+          b.velocity.set(_vel.x, _vel.y, _vel.z);
+        }
+        b.collisionResponse = true;
+      } else {
+        b.collisionResponse = false;
+        b.velocity.set(0, 0, 0);
+        c.hasPrev = false;
+      }
+    }
+  }
 }
 
 function updateHands(dt) {
@@ -327,18 +445,34 @@ function updateHands(dt) {
     _mid.copy(_a).add(_b).multiplyScalar(0.5); // pinch point
     const indexDist = _a.distanceTo(_b);
 
-    // --- index + thumb pinch => spawn ---
+    // A held object follows the pinch point. Keeping its velocity in sync
+    // means it also shoves anything it sweeps into while carried.
+    if (state.held) {
+      const b = state.held.body;
+      if (dt > 0) {
+        _vel.set((_mid.x - b.position.x) / dt, (_mid.y - b.position.y) / dt, (_mid.z - b.position.z) / dt);
+        if (_vel.length() > MAX_THROW_SPEED * 1.5) _vel.setLength(MAX_THROW_SPEED * 1.5);
+        b.velocity.set(_vel.x, _vel.y, _vel.z);
+      }
+    }
+
+    // --- index + thumb pinch: grab a nearby object, else spawn a new one ---
     if (!state.indexPinching && indexDist < PINCH_ON) {
       state.indexPinching = true;
-      // A gentle forward nudge even on a still pinch, plus any throw velocity.
-      const vel = state.tipVelocity.clone();
-      if (state.handedness === 'left') {
-        spawnCube(_mid, vel);
+      const target = findGrabbable(_mid);
+      if (target) {
+        grab(state, target);
       } else {
-        spawnSphere(_mid, vel); // right hand, or unknown handedness
+        const vel = state.tipVelocity.clone();
+        if (state.handedness === 'left') {
+          spawnCube(_mid, vel);
+        } else {
+          spawnSphere(_mid, vel); // right hand, or unknown handedness
+        }
       }
     } else if (state.indexPinching && indexDist > PINCH_OFF) {
       state.indexPinching = false;
+      if (state.held) release(state); // open the pinch => throw
     }
 
     // --- middle + thumb pinch => clear everything ---
@@ -378,6 +512,7 @@ renderer.setAnimationLoop((timestamp, frame) => {
   if (frame) {
     const referenceSpace = renderer.xr.getReferenceSpace();
     updatePlanes(frame, referenceSpace);
+    updateHandColliders(dt);
     updateHands(dt);
   }
 

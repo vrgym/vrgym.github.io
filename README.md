@@ -13,16 +13,19 @@ superficies (suelo, paredes, mesas) y deja lanzar **cubos y esferas con física*
   solicitado para ampliarlo a la malla completa de la sala (ver ideas abajo).
 - **Física real** (cannon-es): gravedad, las esferas rebotan, los cubos se apilan
   y las torres se caen si las golpeas.
-- **Control por manos** (sin mandos): gestos de pellizco con hand-tracking.
+- **Control por manos** (sin mandos): pellizca para crear, **agarra y lanza**
+  objetos, y **golpéalos con la mano** para proyectarlos (hand-tracking).
 
 ## Gestos
 
 | Gesto | Acción |
 |-------|--------|
-| 👌 Pellizco pulgar + índice (mano **derecha**) | Lanza una **esfera** (rebota) |
-| 👌 Pellizco pulgar + índice (mano **izquierda**) | Lanza un **cubo** (se apila) |
+| 👌 Pellizco pulgar + índice **en el aire** (mano **derecha**) | Crea una **esfera** (rebota) |
+| 👌 Pellizco pulgar + índice **en el aire** (mano **izquierda**) | Crea un **cubo** (se apila) |
+| ✊ Pellizco pulgar + índice **sobre un objeto** | Lo **agarra** y lo mueves con la mano |
+| 🚀 Abre la mano mientras la mueves | **Lanza** el objeto agarrado con esa velocidad |
+| 👊 Golpea un objeto con la mano | Sale **proyectado** (las yemas y la palma son colisionadores) |
 | 🤏 Pellizco pulgar + **corazón** (cualquier mano) | Borra todos los objetos |
-| 🚀 Mueve la mano mientras pellizcas | Lanza el objeto con fuerza |
 
 ## Cómo probarlo
 
