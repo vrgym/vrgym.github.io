@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>VR Gym — WebXR Mixed Reality</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #0b0e14; }
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      color: #e6edf3;
+    }
+
+    /* Landing / info panel shown on 2D screens (phone, desktop, Quest browser window) */
+    #landing {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1.25rem;
+      padding: 2rem;
+      text-align: center;
+      background:
+        radial-gradient(1200px 600px at 50% -10%, #1b2a4a 0%, transparent 60%),
+        #0b0e14;
+      z-index: 5;
+    }
+    #landing h1 { font-size: clamp(1.8rem, 5vw, 3rem); margin: 0; letter-spacing: -0.02em; }
+    #landing p { max-width: 42ch; line-height: 1.6; color: #9fb0c3; margin: 0; }
+    .gestures {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 0.75rem;
+      max-width: 620px;
+      width: 100%;
+      margin-top: 0.5rem;
+    }
+    .gesture {
+      background: #121826;
+      border: 1px solid #22304a;
+      border-radius: 14px;
+      padding: 0.9rem 1rem;
+      text-align: left;
+    }
+    .gesture b { display: block; font-size: 0.95rem; }
+    .gesture span { font-size: 0.82rem; color: #8fa0b5; }
+    #status {
+      font-size: 0.85rem;
+      color: #ffb86b;
+      min-height: 1.2em;
+    }
+
+    /* Heads-up display shown inside the immersive session via dom-overlay */
+    #hud {
+      position: fixed;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%);
+      display: none;
+      gap: 10px;
+      padding: 10px 16px;
+      background: rgba(10, 14, 22, 0.55);
+      border: 1px solid rgba(120, 150, 200, 0.3);
+      border-radius: 999px;
+      backdrop-filter: blur(8px);
+      font-size: 13px;
+      white-space: nowrap;
+      z-index: 20;
+      pointer-events: none;
+    }
+    #hud .dot { color: #6ee7ff; }
+
+    /* Three.js ARButton styling override */
+    #ar-button {
+      appearance: none;
+      border: 0;
+      border-radius: 999px;
+      padding: 0.9rem 2.2rem;
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: #04111f;
+      background: linear-gradient(135deg, #6ee7ff, #7c9cff);
+      cursor: pointer;
+      box-shadow: 0 10px 30px rgba(110, 231, 255, 0.25);
+    }
+    #ar-button:disabled { opacity: 0.5; cursor: not-allowed; filter: grayscale(0.4); }
+  </style>
+</head>
+<body>
+  <div id="landing">
+    <h1>🧱 VR Gym</h1>
+    <p>
+      Una app de <b>realidad mixta</b> para Meta Quest. Mira tu habitación real
+      a través del passthrough, detecta paredes, mesas y suelo, y lanza cubos y
+      esferas que respetan la física: rebotes, apilamiento y torres que se derrumban.
+    </p>
+    <div id="ar-button-container"></div>
+    <div id="status">Comprobando compatibilidad con WebXR…</div>
+    <div class="gestures">
+      <div class="gesture">
+        <b>👌 Pellizco mano derecha</b>
+        <span>Lanza una <b>esfera</b> (rebota)</span>
+      </div>
+      <div class="gesture">
+        <b>👌 Pellizco mano izquierda</b>
+        <span>Lanza un <b>cubo</b> (se apila)</span>
+      </div>
+      <div class="gesture">
+        <b>🤏 Pulgar + corazón</b>
+        <span>Borra todos los objetos</span>
+      </div>
+      <div class="gesture">
+        <b>🚀 Mueve la mano al pellizcar</b>
+        <span>Para lanzar con fuerza</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="hud">
+    <span><span class="dot">●</span> Pellizco derecho = esfera</span>
+    <span><span class="dot">●</span> Pellizco izquierdo = cubo</span>
+    <span><span class="dot">●</span> Pulgar+corazón = limpiar</span>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+      "cannon-es": "https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js"
+    }
+  }
+  </script>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

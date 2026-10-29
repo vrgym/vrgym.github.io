@@ -1,1 +1,72 @@
-# vrgym.github.io
+# 🧱 VR Gym — WebXR Mixed Reality para Meta Quest
+
+Una SPA para aprender **WebXR** construyendo una app de **realidad mixta** que
+interactúa con tu entorno real: usa el passthrough de las cámaras, detecta
+superficies (suelo, paredes, mesas) y deja lanzar **cubos y esferas con física**
+—rebotes, apilamiento y torres que se derrumban— controlado todo con las **manos**.
+
+## Qué hace
+
+- **Passthrough / realidad mixta**: sesión `immersive-ar`, ves tu habitación real.
+- **Detección del entorno**: `plane-detection` convierte las superficies reales
+  (suelo, paredes, mesas) en colisionadores físicos. `mesh-detection` queda
+  solicitado para ampliarlo a la malla completa de la sala (ver ideas abajo).
+- **Física real** (cannon-es): gravedad, las esferas rebotan, los cubos se apilan
+  y las torres se caen si las golpeas.
+- **Control por manos** (sin mandos): gestos de pellizco con hand-tracking.
+
+## Gestos
+
+| Gesto | Acción |
+|-------|--------|
+| 👌 Pellizco pulgar + índice (mano **derecha**) | Lanza una **esfera** (rebota) |
+| 👌 Pellizco pulgar + índice (mano **izquierda**) | Lanza un **cubo** (se apila) |
+| 🤏 Pellizco pulgar + **corazón** (cualquier mano) | Borra todos los objetos |
+| 🚀 Mueve la mano mientras pellizcas | Lanza el objeto con fuerza |
+
+## Cómo probarlo
+
+1. **GitHub Pages**: en el repo → *Settings → Pages* → *Deploy from branch* →
+   `main` / `root`. WebXR exige HTTPS y Pages ya lo da.
+2. En las **Meta Quest**, abre el navegador y entra a la URL
+   (`https://vrgym.github.io`).
+3. Activa el **tracking de manos** en la Quest (*Ajustes → Movimiento → Hand tracking*).
+4. Pulsa **Entrar en Realidad Mixta** y acepta los permisos.
+5. Mueve la cabeza por la sala unos segundos para que detecte las superficies
+   (verás tenues rectángulos azules sobre paredes y mesas), y empieza a pellizcar.
+
+> La detección de planos necesita que hayas configurado el **Space Setup / guardián
+> de la sala** en la Quest para tener datos de paredes y muebles.
+
+## Desarrollo local
+
+No hace falta build: son ES modules desde CDN. Pero WebXR requiere un origen
+seguro, así que para probar en el visor sirve por HTTPS (o usa `adb reverse` +
+`localhost`, que cuenta como seguro):
+
+```bash
+# servidor estático simple
+npx serve .
+# luego en la Quest conectada por USB:
+adb reverse tcp:3000 tcp:3000   # abre http://localhost:3000 en el visor
+```
+
+## Estructura
+
+```
+index.html      # landing + importmap + HUD
+src/main.js      # escena Three.js, mundo físico, planos XR y gestos de mano
+```
+
+## Stack
+
+- [Three.js](https://threejs.org/) `0.169` — render y helpers WebXR (ARButton, XRHandModelFactory)
+- [cannon-es](https://pmndrs.github.io/cannon-es/) `0.20` — física de cuerpos rígidos
+- WebXR Device API: `immersive-ar`, `plane-detection`, `mesh-detection`, `hand-tracking`
+
+## Ideas para seguir aprendiendo
+
+- Anclar los objetos al mundo con `anchors` para que persistan al moverte.
+- Usar la malla (`mesh-detection`) como colisionador *trimesh* en vez de cajas.
+- Distinguir superficies por su `semanticLabel` (mesa, pared, suelo, techo).
+- Sonidos de impacto espacializados con la Web Audio API.
