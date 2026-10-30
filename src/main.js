@@ -280,10 +280,11 @@ const verticalMat = makePlaneMat(0x6ea8ff); // walls / windows / doors
 const TABLE_LABELS = new Set(['table', 'desk', 'shelf', 'couch', 'bed', 'other']);
 
 // Counts for the on-screen feedback, refreshed every frame.
-const planeStats = { total: 0, tables: 0 };
+const planeStats = { total: 0, tables: 0, apiAvailable: false };
 
 function updatePlanes(frame, referenceSpace) {
   const detected = frame.detectedPlanes;
+  planeStats.apiAvailable = detected != null;
   if (!detected) return;
 
   // Remove colliders for planes that no longer exist.
@@ -557,9 +558,14 @@ const hud = document.getElementById('hud');
 const hudPlanes = document.getElementById('hud-planes');
 const landing = document.getElementById('landing');
 
+let sessionFeatures = [];
+
 renderer.xr.addEventListener('sessionstart', () => {
   hud.style.display = 'flex';
   landing.style.display = 'none';
+  const session = renderer.xr.getSession();
+  sessionFeatures = session?.enabledFeatures ? Array.from(session.enabledFeatures) : [];
+  console.log('[VRGym] enabledFeatures:', sessionFeatures);
 });
 renderer.xr.addEventListener('sessionend', () => {
   hud.style.display = 'none';
@@ -578,14 +584,35 @@ renderer.setAnimationLoop((timestamp, frame) => {
     updateHandColliders(dt);
     updateHands(dt);
 
-    // Lightweight on-screen confirmation of what the room scan picked up.
+    // On-screen diagnostics so we can see exactly why surfaces (don't) work.
     if (hudPlanes) {
-      if (planeStats.total === 0) {
-        hudPlanes.innerHTML = '<span class="dot" style="color:#ffb86b">●</span> Mueve la cabeza para detectar superficies…';
+      const meshCount = frame.detectedMeshes ? frame.detectedMeshes.size : null;
+      const has = (f) => sessionFeatures.includes(f);
+      const yn = (b) => (b ? '✓' : '✗');
+      const feats =
+        `pd${yn(has('plane-detection'))} ` +
+        `md${yn(has('mesh-detection'))} ` +
+        `ht${yn(has('hand-tracking'))}`;
+
+      let line;
+      let warn = false;
+      if (!planeStats.apiAvailable) {
+        // Browser isn't exposing plane detection at all.
+        line = 'API de planos NO disponible — activa plane-detection';
+        warn = true;
+      } else if (planeStats.total === 0) {
+        // API present but no planes: permission denied or no Space Setup.
+        line = 'Planos: 0 — permite DATOS ESPACIALES y revisa Space Setup';
+        warn = true;
       } else {
         const tableNote = planeStats.tables > 0 ? ` · 🟢 ${planeStats.tables} mesa(s)` : '';
-        hudPlanes.innerHTML = `<span class="dot">●</span> ${planeStats.total} superficies${tableNote}`;
+        line = `Planos: ${planeStats.total}${tableNote}`;
       }
+      const meshNote = meshCount != null ? ` · mallas:${meshCount}` : '';
+      const dotColor = warn ? '#ffb86b' : '#6ee7ff';
+      hudPlanes.innerHTML =
+        `<span class="dot" style="color:${dotColor}">●</span> ${line} ` +
+        `<span style="opacity:.6">[${feats}${meshNote}]</span>`;
     }
   }
 
@@ -606,8 +633,10 @@ const statusEl = document.getElementById('status');
 const buttonContainer = document.getElementById('ar-button-container');
 
 const button = ARButton.createButton(renderer, {
-  requiredFeatures: ['local-floor'],
-  optionalFeatures: ['plane-detection', 'mesh-detection', 'hand-tracking', 'anchors', 'dom-overlay'],
+  // plane-detection is required: it's the whole point, and requiring it forces
+  // the Quest's spatial-data permission prompt instead of silently skipping it.
+  requiredFeatures: ['local-floor', 'plane-detection'],
+  optionalFeatures: ['mesh-detection', 'hand-tracking', 'anchors', 'dom-overlay'],
   domOverlay: { root: document.body },
 });
 button.id = 'ar-button';

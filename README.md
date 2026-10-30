@@ -44,6 +44,24 @@ superficies (suelo, paredes, mesas) y deja lanzar **cubos y esferas con física*
 > La detección de planos necesita que hayas configurado el **Space Setup / guardián
 > de la sala** en la Quest para tener datos de paredes y muebles.
 
+## Solución de problemas
+
+**Los objetos atraviesan la mesa y el suelo / caen al vacío.** Significa que no se
+está detectando ningún plano. El HUD (abajo) te dice qué pasa:
+
+- `API de planos NO disponible` → el navegador no habilitó `plane-detection`.
+  Actualiza el navegador de la Quest; esta app lo pide como *required* para forzar
+  el permiso.
+- `Planos: 0 — permite DATOS ESPACIALES` → al entrar aparece un prompt pidiendo
+  acceso a los **datos espaciales / de la sala**: hay que **aceptarlo**. Si lo
+  rechazaste, sal y vuelve a entrar. Comprueba también que el **Space Setup** de
+  *esta* habitación esté hecho (*Ajustes → Espacio físico → Configurar*).
+- `Planos: N` con `pd✓ ht✓` → todo bien; los objetos deberían apoyarse en las
+  superficies verdes (suelo/mesas) y azules (paredes).
+
+El bloque entre `[ ]` del HUD muestra las *features* activas: `pd`=plane-detection,
+`md`=mesh-detection, `ht`=hand-tracking (✓/✗), y el número de mallas detectadas.
+
 ## Desarrollo local
 
 No hace falta build: son ES modules desde CDN. Pero WebXR requiere un origen
